@@ -33,12 +33,13 @@
   // ---- state ------------------------------------------------------------------------------------
   const S = {
     deals: [], byKey: new Map(), meta: null, sample: false,
-    filter: { play: "", county: "", q: "", sort: "score", hidePass: true, onlyNew: false },
+    filter: null,  // set at boot from FILTER_DEFAULTS and what this device remembers
     shown: 60, sel: null, view: "deals", spot: null, tracked: {}, newCut: null,
     gh: null, index: null, loading: false, loadError: "", keyProblem: false, showConnect: false,
     latestRun: null, asked: null, failedRun: null, installEvt: null,
     sync: { at: 0, problem: "", pending: false },
   };
+  const FILTER_DEFAULTS = { tags: [], match: "any", counties: [], q: "", sort: "score", hidePass: true, onlyNew: false, kind: "", maxPrice: null, minAcres: null, minScore: null };
   const keyOf = d => d.county + "|" + d.parcel_id;
   const safeUrl = u => /^https:\/\//i.test(String(u || "")) ? String(u) : "";
   const clock = iso => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
@@ -156,7 +157,7 @@
   const metaOf = pack => ({ loadedAt: pack.loadedAt, generatedAt: pack.generatedAt, runDate: pack.runDate, source: pack.source });
 
   function setDeals(deals, meta, sample) {
-    deals.forEach(d => { d.key = keyOf(d); d.p = playOf(d); });
+    deals.forEach(d => { d.key = keyOf(d); d.p = playOf(d); d.tags = DM.tagsOf(d); d.tagSet = new Set(d.tags); });
     deals.sort((a, b) => (b.score || 0) - (a.score || 0));
     S.deals = deals; S.meta = meta; S.sample = !!sample;
     S.byKey = new Map(deals.map(d => [d.key, d]));
@@ -223,11 +224,7 @@
     btn.disabled = true; btn.textContent = "Getting it…";
     try {
       const text = await ghText(files[kind], DATA_BRANCH);
-      const url = URL.createObjectURL(new Blob([text], { type: kind === "letters" ? "text/html" : "text/csv" }));
-      const a = document.createElement("a");
-      a.href = url; a.download = kind === "letters" ? `letters-${date}.html` : `mailing-list-${date}.csv`;
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      saveBlob(new Blob([text], { type: kind === "letters" ? "text/html" : "text/csv" }), kind === "letters" ? `letters-${date}.html` : `mailing-list-${date}.csv`);
       toast(kind === "letters" ? "Saved. Open the file and print it." : "Saved. Send it to your mail house.");
     } catch (e) {
       if (e.status !== 401) toast(e.status === 0 ? "You're offline. Try again when you have signal." : "Couldn't get that file just now. Try again in a minute.");
@@ -436,44 +433,33 @@
   function renderSyncNote() { const n = $("sync-note"); if (n) n.textContent = syncLine(); }
 
   // ---- filters ------------------------------------------------------------------------------------
-  function buildFilterOptions() {
-    const counts = {};
-    S.deals.forEach(d => { counts[d.p.base] = (counts[d.p.base] || 0) + 1; });
-    const order = Object.keys(PLAYS);
-    const plays = Object.keys(counts).sort((a, b) => (order.indexOf(a) + 99 * (order.indexOf(a) < 0)) - (order.indexOf(b) + 99 * (order.indexOf(b) < 0)));
-    $("play-chips").innerHTML = `<button class="chip" type="button" data-play="" aria-pressed="${!S.filter.play}">All<span class="c">${S.deals.length.toLocaleString()}</span></button>`
-      + plays.map(p => `<button class="chip" type="button" data-play="${esc(p)}" aria-pressed="${S.filter.play === p}">${esc((PLAYS[p] || {}).label || p)}<span class="c">${counts[p].toLocaleString()}</span></button>`).join("");
-    const counties = Array.from(new Set(S.deals.map(d => d.county))).sort();
-    $("county").innerHTML = '<option value="">All counties</option>' + counties.map(c => `<option${c === S.filter.county ? " selected" : ""}>${esc(c)}</option>`).join("");
-    $("only-new").parentElement.hidden = !S.newCut;
-    if (!S.newCut) { S.filter.onlyNew = false; $("only-new").checked = false; }
+  // Pick any number of reasons (match any or all of them), any number of counties, and a few limits.
+  // Every choice is remembered on this device; the search box is not.
+  const TAG_LABEL = Object.fromEntries(DM.TAGS.map(t => [t.id, t.label]));
+  const priceOf = d => d.cost ?? d.offer ?? d.mao ?? null;  // what you'd pay: the county's bid, else our offer
+  function saveFilters() { const { q, ...keep } = S.filter; LS.set("filters", keep); }
+  const numOrNull = v => { const n = parseFloat(String(v).replace(/[$,\s]/g, "")); return isFinite(n) && n >= 0 ? n : null; };
+
+  function passesBase(d, f) {  // every filter except the reasons
+    if (f.countySet.size && !f.countySet.has(d.county)) return false;
+    if (f.hidePass && (S.tracked[d.key] || {}).status === "Pass") return false;
+    if (f.onlyNew && !isNew(d)) return false;
+    if (f.kind && d.p.kind !== f.kind) return false;
+    if (f.minScore != null && (d.score || 0) < f.minScore) return false;
+    if (f.minAcres != null && !(d.acres >= f.minAcres)) return false;
+    if (f.maxPrice != null) { const p = priceOf(d); if (p == null || p > f.maxPrice) return false; }
+    if (f.q) {
+      const hay = (d.situs_address + " " + d.situs_city + " " + d.owner_name + " " + d.owner_name2 + " " + d.parcel_id + " " + d.county).toUpperCase();
+      if (!hay.includes(f.q)) return false;
+    }
+    return true;
   }
-  function buildTowns() {
-    $("spot-city").innerHTML = '<option value="">Tap the map, or pick a town</option>'
-      + TOWNS.slice().sort((a, b) => a[0].localeCompare(b[0])).map(t => `<option value="${esc(t[0])}">${esc(t[0])}</option>`).join("");
-    if (S.spot && S.spot.name) $("spot-city").value = S.spot.name;
-  }
-  $("play-chips").addEventListener("click", e => { const b = e.target.closest(".chip"); if (!b) return; S.filter.play = b.dataset.play; S.shown = 60; $("play-chips").querySelectorAll(".chip").forEach(c => c.setAttribute("aria-pressed", String(c === b))); renderList(); drawMap(); });
-  $("county").addEventListener("change", e => { S.filter.county = e.target.value; S.shown = 60; renderList(); drawMap(); });
-  let qTimer; $("q").addEventListener("input", e => { clearTimeout(qTimer); qTimer = setTimeout(() => { S.filter.q = e.target.value.trim().toUpperCase(); S.shown = 60; renderList(); drawMap(); }, 150); });
-  $("sort").addEventListener("change", e => { S.filter.sort = e.target.value; S.shown = 60; if (e.target.value === "near" && !S.spot) toast("Set your spot on the Map tab first."); renderList(); });
-  $("hide-pass").addEventListener("change", e => { S.filter.hidePass = e.target.checked; renderList(); drawMap(); });
-  $("only-new").addEventListener("change", e => { S.filter.onlyNew = e.target.checked; renderList(); drawMap(); });
-  $("more").addEventListener("click", () => { S.shown += 60; renderList(); });
+  const passesTags = (d, tags, match) => !tags.length || (match === "all" ? tags.every(t => d.tagSet.has(t)) : tags.some(t => d.tagSet.has(t)));
+  const withSets = f => ({ ...f, countySet: new Set(f.counties) });
 
   function filtered() {
-    const f = S.filter;
-    let out = S.deals.filter(d => {
-      if (f.play && d.p.base !== f.play) return false;
-      if (f.county && d.county !== f.county) return false;
-      if (f.hidePass && (S.tracked[d.key] || {}).status === "Pass") return false;
-      if (f.onlyNew && !isNew(d)) return false;
-      if (f.q) {
-        const hay = (d.situs_address + " " + d.situs_city + " " + d.owner_name + " " + d.owner_name2 + " " + d.parcel_id + " " + d.county).toUpperCase();
-        if (!hay.includes(f.q)) return false;
-      }
-      return true;
-    });
+    const f = withSets(S.filter);
+    let out = S.deals.filter(d => passesBase(d, f) && passesTags(d, f.tags, f.match));
     if (f.sort === "near" && S.spot) {
       out.forEach(d => { d._mi = d.lat != null && d.lon != null ? DM.miles(S.spot.lat, S.spot.lon, d.lat, d.lon) : Infinity; });
       out.sort((a, b) => a._mi - b._mi);
@@ -487,6 +473,158 @@
     return out;
   }
   const isNew = d => !!(S.newCut && (d.first_seen || "").slice(0, 10) === S.newCut);
+
+  // Reason chips, with counts that follow the other filters; the any/all switch shows both totals.
+  function renderChips() {
+    const f = withSets(S.filter);
+    const base = S.deals.filter(d => passesBase(d, f));
+    const counts = {};
+    base.forEach(d => d.tags.forEach(t => { counts[t] = (counts[t] || 0) + 1; }));
+    const avail = DM.TAGS.filter(t => counts[t.id] || f.tags.includes(t.id));
+    const FEW = 8, open = LS.get("allKinds", false);
+    const shown = open ? avail : avail.filter((t, i) => i < FEW || f.tags.includes(t.id));
+    const hiddenN = avail.length - shown.length;
+    $("tag-chips").innerHTML = `<button class="chip" type="button" data-tag="" aria-pressed="${!f.tags.length}">All<span class="c">${base.length.toLocaleString()}</span></button>`
+      + shown.map(t => `<button class="chip" type="button" data-tag="${t.id}" aria-pressed="${f.tags.includes(t.id)}">${esc(t.label)}<span class="c">${(counts[t.id] || 0).toLocaleString()}</span></button>`).join("")
+      + (hiddenN > 0 ? `<button class="chip more-kinds" type="button" data-kinds="open">+${hiddenN} more</button>` : open && avail.length > FEW ? '<button class="chip more-kinds" type="button" data-kinds="close">Fewer</button>' : "");
+    const many = f.tags.length > 1;
+    $("match").hidden = !many;
+    if (many) {
+      const any = base.filter(d => passesTags(d, f.tags, "any")).length, all = base.filter(d => passesTags(d, f.tags, "all")).length;
+      $("match").innerHTML = `<span>Show deals with</span><button type="button" class="seg" data-match="any" aria-pressed="${f.match !== "all"}">any of these <b>${any.toLocaleString()}</b></button><button type="button" class="seg" data-match="all" aria-pressed="${f.match === "all"}">all of these <b>${all.toLocaleString()}</b></button>`;
+    }
+    $("tags-n").textContent = f.tags.length ? `${f.tags.length} picked` : "";
+  }
+
+  function renderCountyPick() {
+    const f = S.filter, counts = {};
+    S.deals.forEach(d => { counts[d.county] = (counts[d.county] || 0) + 1; });
+    const q = ($("county-q").value || "").trim().toLowerCase();
+    const names = Object.keys(counts).sort().filter(c => !q || c.toLowerCase().includes(q) || f.counties.includes(c));
+    $("county-list").innerHTML = names.length ? names.map(c => `<label class="pick-row"><input type="checkbox" value="${esc(c)}"${f.counties.includes(c) ? " checked" : ""}> <span>${esc(c)}</span><small>${counts[c].toLocaleString()}</small></label>`).join("")
+      : '<p class="hint">No county by that name in this week\'s deals.</p>';
+    $("county-sum").textContent = !f.counties.length ? "All counties" : f.counties.length === 1 ? f.counties[0] : `${f.counties[0]} + ${f.counties.length - 1} more`;
+  }
+
+  function filtersActive() {
+    const f = S.filter;
+    return !!(f.tags.length || f.counties.length || f.q || f.onlyNew || f.kind || f.minScore != null || f.minAcres != null || f.maxPrice != null);
+  }
+  function syncFilterInputs() {
+    const f = S.filter;
+    $("sort").value = f.sort; $("hide-pass").checked = f.hidePass; $("only-new").checked = f.onlyNew;
+    $("kind").value = f.kind || "";
+    $("max-price").value = f.maxPrice ?? ""; $("min-acres").value = f.minAcres ?? ""; $("min-score").value = f.minScore ?? "";
+    syncMoreCount();
+  }
+  function filtersChanged() {
+    S.shown = 60;
+    saveFilters(); syncFilterInputs(); renderChips(); renderCountyPick(); renderList(); drawMap();
+  }
+
+  function buildFilterOptions() {
+    // keep only reasons and counties this week's deals can match; a remembered pick that can't match is dropped
+    const counties = new Set(S.deals.map(d => d.county));
+    S.filter.counties = S.filter.counties.filter(c => counties.has(c));
+    $("only-new").parentElement.hidden = !S.newCut;
+    if (!S.newCut) S.filter.onlyNew = false;
+    syncFilterInputs(); renderChips(); renderCountyPick();
+  }
+  function buildTowns() {
+    $("spot-city").innerHTML = '<option value="">Tap the map, or pick a town</option>'
+      + TOWNS.slice().sort((a, b) => a[0].localeCompare(b[0])).map(t => `<option value="${esc(t[0])}">${esc(t[0])}</option>`).join("");
+    if (S.spot && S.spot.name) $("spot-city").value = S.spot.name;
+  }
+
+  $("tag-chips").addEventListener("click", e => {
+    const b = e.target.closest(".chip"); if (!b) return;
+    if (b.dataset.kinds) { LS.set("allKinds", b.dataset.kinds === "open"); renderChips(); return; }
+    const t = b.dataset.tag, tags = S.filter.tags;
+    S.filter.tags = !t ? [] : tags.includes(t) ? tags.filter(x => x !== t) : [...tags, t];
+    filtersChanged();
+  });
+  $("match").addEventListener("click", e => { const b = e.target.closest("[data-match]"); if (b) { S.filter.match = b.dataset.match; filtersChanged(); } });
+  $("county-list").addEventListener("change", e => {
+    const c = e.target.value;
+    S.filter.counties = e.target.checked ? [...S.filter.counties, c].sort() : S.filter.counties.filter(x => x !== c);
+    filtersChanged();
+  });
+  $("county-q").addEventListener("input", renderCountyPick);
+  document.addEventListener("click", e => {  // tap outside the county list to close it
+    const pick = $("county-pick");
+    if (pick.open && !pick.contains(e.target)) pick.open = false;
+  });
+  let qTimer;
+  $("q").addEventListener("input", e => { clearTimeout(qTimer); qTimer = setTimeout(() => { S.filter.q = e.target.value.trim().toUpperCase(); S.shown = 60; renderChips(); renderList(); drawMap(); updateFilterBar(); }, 150); });
+  $("sort").addEventListener("change", e => { S.filter.sort = e.target.value; if (e.target.value === "near" && !S.spot) toast("Set your spot on the Map tab first."); filtersChanged(); });
+  $("hide-pass").addEventListener("change", e => { S.filter.hidePass = e.target.checked; filtersChanged(); });
+  $("only-new").addEventListener("change", e => { S.filter.onlyNew = e.target.checked; filtersChanged(); });
+  $("kind").addEventListener("change", e => { S.filter.kind = e.target.value; filtersChanged(); });
+  let nTimer;
+  [["max-price", "maxPrice"], ["min-acres", "minAcres"], ["min-score", "minScore"]].forEach(([id, key]) => {
+    $(id).addEventListener("input", e => { clearTimeout(nTimer); nTimer = setTimeout(() => { S.filter[key] = numOrNull(e.target.value); S.shown = 60; saveFilters(); renderChips(); renderList(); drawMap(); syncMoreCount(); }, 300); });
+  });
+  function syncMoreCount() {
+    const f = S.filter, extra = [f.kind, f.maxPrice, f.minAcres, f.minScore].filter(v => v != null && v !== "").length;
+    $("more-n").textContent = extra ? ` (${extra} on)` : "";
+  }
+  function clearFilters() {
+    const keep = { sort: S.filter.sort, hidePass: S.filter.hidePass };
+    S.filter = { ...FILTER_DEFAULTS, ...keep, tags: [], counties: [] };
+    $("q").value = ""; $("county-q").value = "";
+    filtersChanged();
+  }
+  function updateFilterBar() { $("clear-filters").hidden = !filtersActive(); }
+  $("more").addEventListener("click", () => { S.shown += 60; renderList(); });
+
+  // ---- export: the whole filtered list, in the order you see it ----------------------------------------
+  function exportColumns() {
+    const t = k => d => (S.tracked[d.key] || {})[k] || null;
+    const cols = [
+      ["Score", "dec1", 7, d => d.score], ["Kind of deal", "text", 26, d => d.p.label + (d.p.kind ? ` (${d.p.kind})` : "")],
+      ["Reasons", "text", 40, d => d.tags.map(x => TAG_LABEL[x]).join(", ")],
+      ["Tracker status", "text", 14, t("status")], ["Tracker notes", "text", 30, t("note")],
+      ["County", "text", 12, d => d.county], ["Parcel", "text", 24, d => d.parcel_id],
+      ["Property address", "text", 30, d => d.situs_address], ["Property city", "text", 16, d => d.situs_city],
+      ["Owner", "text", 32, d => d.owner_name], ["Owner 2", "text", 24, d => d.owner_name2],
+      ["Mailing address", "text", 30, d => d.mail_address], ["Mailing city", "text", 18, d => d.mail_city],
+      ["State", "text", 6, d => d.mail_state], ["ZIP", "text", 8, d => d.mail_zip == null ? null : String(d.mail_zip).replace(/-0000$/, "")],
+      ["County bid", "money", 12, d => d.cost], ["Opening offer", "money", 13, d => d.offer], ["Max offer (70% rule)", "money", 13, d => d.mao],
+      ["After-repair value", "money", 13, d => d.arv], ["Repairs (est.)", "money", 12, d => d.repairs],
+      ["Assessed value", "money", 13, d => d.total_value], ["Land value", "money", 12, d => d.land_value],
+      ["Acres", "dec2", 8, d => d.acres], ["Living sq ft", "int", 10, d => d.building_sqft], ["Year built", "num", 9, d => d.year_built],
+      ["Condition", "text", 10, d => d.condition], ["Land use", "text", 20, d => d.land_use],
+      ["Why it's on the list", "text", 70, d => d.why], ["First seen", "text", 11, d => (d.first_seen || "").slice(0, 10) || null],
+    ];
+    if (S.spot) cols.push(["Miles from my spot", "dec1", 10, d => d.lat != null && d.lon != null ? Math.round(DM.miles(S.spot.lat, S.spot.lon, d.lat, d.lon) * 10) / 10 : null]);
+    cols.push(["Latitude", "num", 10, d => d.lat], ["Longitude", "num", 11, d => d.lon],
+      ["Directions", "link", 12, d => d.lat != null && d.lon != null ? `https://www.google.com/maps/dir/?api=1&destination=${d.lat},${d.lon}` : null, "Directions"],
+      ["County record", "link", 14, d => safeUrl(d.assessor_url) || null, "County record"]);
+    return cols.map(([name, type, width, get, label]) => ({ name, type, width, get, label }));
+  }
+  function saveBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+  async function exportList(format, btn) {
+    const list = filtered();
+    if (!list.length) { toast("No deals match these filters, so there's nothing to export."); return; }
+    const cols = exportColumns(), rows = list.map(d => cols.map(c => c.get(d)));
+    const run = (S.meta && S.meta.runDate) || new Date().toISOString().slice(0, 10);
+    const name = `deal-machine-${run}-${list.length}-deals`;
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = "Making it…";
+    try {
+      if (format === "csv") saveBlob(new Blob([DM.csv(cols, rows)], { type: "text/csv" }), name + ".csv");
+      else saveBlob(new Blob([await DM.xlsx("Deals", cols, rows)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), name + ".xlsx");
+      toast(`Saved ${list.length.toLocaleString()} deals. Open the file in Excel, Google Sheets or Numbers.`);
+    } catch (e) {
+      toast("Couldn't make the spreadsheet. Try the CSV button instead.");
+    } finally { btn.disabled = false; btn.textContent = label; }
+  }
 
   // ---- rendering: list -----------------------------------------------------------------------------
   function headline(d) {
@@ -519,6 +657,7 @@
     if (!S.deals.length) return;
     const list = filtered();
     $("count-line").textContent = list.length === S.deals.length ? `${list.length.toLocaleString()} deals` : `${list.length.toLocaleString()} of ${S.deals.length.toLocaleString()} deals match`;
+    updateFilterBar();
     $("deal-list").innerHTML = list.length ? list.slice(0, S.shown).map(card).join("")
       : '<div class="panel-empty">No deals match. Clear the search or pick "All".</div>';
     $("more").hidden = list.length <= S.shown;
@@ -628,7 +767,11 @@
     const cp = panel.querySelector("[data-copy-parcel]");
     if (cp && d) cp.addEventListener("click", () => copyText(d.parcel_id, cp));
   }
-  document.addEventListener("keydown", e => { if (e.key === "Escape" && S.sel && $("pw-modal").hidden) closePanel(); });
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Escape") return;
+    if ($("county-pick").open) { $("county-pick").open = false; return; }
+    if (S.sel && $("pw-modal").hidden) closePanel();
+  });
 
   // ---- tracked view --------------------------------------------------------------------------------
   function renderTrackedCount() { const n = Object.keys(S.tracked).length; $("tracked-n").textContent = n ? String(n) : ""; }
@@ -781,6 +924,8 @@
       <div><h2>Using the deals</h2><ul>
         <li><b>Buy now from the county</b> deals are the best: the county owns them. Call that county's treasurer and ask how to bid.</li>
         <li><b>Behind on taxes, Heirs, Absentee, Neglected, Storm damage</b>: the owner might sell. Mail them a letter (<b>Letters to print</b> on the Deals tab), then track it here.</li>
+        <li><b>Filters:</b> tap as many kinds as you like (say <b>Heirs / estate</b> and <b>Behind on taxes</b>), then choose <b>any of these</b> or <b>all of these</b>. Pick several counties the same way. <b>More filters</b> adds a price limit, acres, score and land or houses.</li>
+        <li><b>Export to spreadsheet</b> saves every deal that matches your filters (not just the ones on screen) as an Excel file, with owners, mailing addresses, the numbers and your tracker notes. <b>CSV</b> is the same list for mail-merge tools.</li>
         <li>On the <b>Map</b> tab, set your spot, then "Nearest to my spot" lists what's close while you drive around. <b>Directions</b> opens Google Maps.</li>
         <li>Tap a status on any deal (Mailed, Called, Under contract…). The <b>Tracked</b> tab keeps your follow-ups in one place on all your devices.</li>
       </ul></div>
@@ -913,6 +1058,10 @@
     else if (act === "disconnect") disconnect();
     else if (act === "load-file") $("file").click();
     else if (act === "install") installApp();
+    else if (act === "clear-filters") clearFilters();
+    else if (act === "county-done") $("county-pick").open = false;
+    else if (act === "county-clear") { S.filter.counties = []; $("county-q").value = ""; filtersChanged(); }
+    else if (act === "export-xlsx" || act === "export-csv") exportList(act.slice(7), b);
   });
   $("load-btn").addEventListener("click", () => { refresh({ announce: "button" }); checkRun(); syncTracking(); });
 
@@ -944,6 +1093,15 @@
   // ---- boot ----------------------------------------------------------------------------------------
   S.spot = LS.get("spot", null);
   if (S.spot) { $("spot-clear").hidden = false; }
+  {
+    const saved = LS.get("filters", {}) || {};
+    S.filter = { ...FILTER_DEFAULTS };
+    for (const k of Object.keys(FILTER_DEFAULTS)) {
+      if (k !== "q" && k in saved && (Array.isArray(FILTER_DEFAULTS[k]) ? Array.isArray(saved[k]) : true)) S.filter[k] = saved[k];
+    }
+    S.filter.tags = S.filter.tags.filter(t => TAG_LABEL[t]);
+    if (S.filter.sort === "near" && !S.spot) S.filter.sort = "score";
+  }
   S.gh = LS.get("gh", null);
   S.index = LS.get("index", null);
   S.asked = LS.get("asked", null);

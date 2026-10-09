@@ -44,3 +44,28 @@ test("tax calendar lists the upcoming dates in order", () => {
   assert.ok(cal.every((e, i) => i === 0 || cal[i - 1].when <= e.when));
   assert.ok(cal[0].when >= new Date(Date.UTC(2026, 9, 9)));
 });
+
+test("reasons come from the robot's codes, or from its sentences in older files", () => {
+  assert.deepEqual(DM.tagsOf({ signals: "tax_delinquent estate_or_heirs out_of_state_owner" }), ["delinquent", "heirs", "absentee", "outofstate"]);
+  const why = "County-owned: buyable now by commissioner's sale bid (listed $708) · Vacant land (0.32 ac) · Bid $708 is 9% of the $8,100 assessed value"
+    + " · Last transfer: Personal Representative Deed (estate sale), 2024 · Delinquent property taxes (2 yrs, $1,940 owed) · EF2 damage surveyed 2026-05-06: roof removed";
+  assert.deepEqual(DM.tagsOf({ why }), ["buy", "delinquent", "heirs", "storm", "vacant", "discount"]);
+  assert.deepEqual(DM.tagsOf({ why: "" }), []);
+  for (const t of DM.TAGS) assert.ok(t.codes.length && t.label, t.id);
+});
+
+test("spreadsheet: a valid zip with typed cells, and CSV that can't run formulas", async () => {
+  const cols = [{ name: "Parcel", type: "text" }, { name: "Bid", type: "money" }, { name: "Owner", type: "text" }, { name: "Map", type: "link", label: "Directions" }];
+  const rows = [["00123", 708, "=HYPERLINK(\"x\") & <b>", "https://www.google.com/maps/dir/?api=1&destination=35.4,-99.4"], ["38975923302580", null, "Núñez", null]];
+  const files = await DM.readZip(await DM.xlsx("Deals", cols, rows));
+  assert.deepEqual(Object.keys(files).sort(), ["[Content_Types].xml", "_rels/.rels", "xl/_rels/workbook.xml.rels", "xl/styles.xml", "xl/workbook.xml", "xl/worksheets/sheet1.xml"]);
+  const sheet = new TextDecoder().decode(files["xl/worksheets/sheet1.xml"]);
+  assert.match(sheet, /<c r="A2" t="inlineStr"><is><t xml:space="preserve">00123<\/t>/, "parcel stays text");
+  assert.match(sheet, /<c r="B2" s="2"><v>708<\/v>/, "money is a number with a $ format");
+  assert.match(sheet, /=HYPERLINK\(&quot;x&quot;\) &amp; &lt;b&gt;/, "owner text is escaped, not a formula");
+  assert.match(sheet, /<f>HYPERLINK\(/, "links are clickable");
+  assert.match(sheet, /<autoFilter ref="A1:D3"\/>/);
+  assert.equal(DM.crc32(new TextEncoder().encode("123456789")), 0xcbf43926);
+  const text = DM.csv(cols, rows);
+  assert.ok(text.startsWith("﻿Parcel,Bid,Owner,Map\r\n00123,708,\"'=HYPERLINK(\"\"x\"\") & <b>\""), text.slice(0, 80));
+});

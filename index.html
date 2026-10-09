@@ -52,10 +52,19 @@
         <div id="deals-ui" hidden>
           <div id="weekbar-slot"></div>
           <div class="filters">
-            <div class="chips" id="play-chips" role="group" aria-label="Kind of deal"></div>
+            <div class="filter-head"><span class="flabel">What makes it a deal <span id="tags-n"></span></span><span class="match" id="match" role="group" aria-label="How to combine your picks" hidden></span></div>
+            <div class="chips wrap" id="tag-chips" role="group" aria-label="What makes it a deal (pick any number)"></div>
             <div class="controls">
               <label class="field search"><span>Search</span><input id="q" type="search" placeholder="Street, owner, parcel or city" autocomplete="off"></label>
-              <label class="field"><span>County</span><select id="county"><option value="">All counties</option></select></label>
+              <div class="field"><span>Counties</span>
+                <details class="pick" id="county-pick"><summary id="county-sum">All counties</summary>
+                  <div class="pick-menu">
+                    <input id="county-q" type="search" placeholder="Find a county" autocomplete="off" aria-label="Find a county">
+                    <div class="pick-list" id="county-list"></div>
+                    <div class="row"><button class="btn small" type="button" data-act="county-clear">All counties</button><button class="btn small primary" type="button" data-act="county-done">Done</button></div>
+                  </div>
+                </details>
+              </div>
               <label class="field"><span>Sort</span><select id="sort">
                 <option value="score">Best deals first</option>
                 <option value="near">Nearest to my spot</option>
@@ -64,12 +73,24 @@
                 <option value="new">Newest first</option>
               </select></label>
             </div>
+            <details class="more-filters" id="more-filters"><summary>More filters<span id="more-n"></span></summary>
+              <div class="controls more-grid">
+                <label class="field"><span>Max bid / offer</span><input id="max-price" type="number" inputmode="numeric" min="0" step="500" placeholder="Any"></label>
+                <label class="field"><span>Min acres</span><input id="min-acres" type="number" inputmode="decimal" min="0" step="0.25" placeholder="Any"></label>
+                <label class="field"><span>Min score</span><input id="min-score" type="number" inputmode="numeric" min="0" max="100" step="5" placeholder="Any"></label>
+                <label class="field"><span>Property</span><select id="kind"><option value="">Land and houses</option><option value="lot">Land only</option><option value="house">Houses only</option></select></label>
+              </div>
+            </details>
             <div class="toggles">
               <label><input type="checkbox" id="hide-pass" checked> Hide deals I passed on</label>
               <label><input type="checkbox" id="only-new"> Only new this week</label>
             </div>
           </div>
-          <p class="count-line" id="count-line"></p>
+          <div class="count-row">
+            <p class="count-line" id="count-line"></p>
+            <button class="btn small" type="button" data-act="clear-filters" id="clear-filters" hidden>Clear filters</button>
+            <span class="export"><button class="btn small primary" type="button" data-act="export-xlsx">Export to spreadsheet</button><button class="btn small" type="button" data-act="export-csv" aria-label="Export as CSV">CSV</button></span>
+          </div>
           <div class="deals" id="deal-list"></div>
           <div class="row" style="justify-content:center"><button class="btn more" id="more" type="button" hidden>Show more</button></div>
         </div>
