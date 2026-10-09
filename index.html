@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://api.github.com; img-src 'self' data: blob:; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<title>Oklahoma Deal Machine</title>
+<meta name="description" content="This week's best Oklahoma land and property deals, a map, and your follow-up tracker.">
+<meta name="theme-color" content="#f2f5f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1512" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Deal Machine">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@500&family=Public+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="top">
+  <div class="top-inner">
+    <div class="brand-row">
+      <div class="mark" aria-hidden="true">OK</div>
+      <div class="brand">
+        <h1>Oklahoma Deal Machine</h1>
+        <p id="status" role="status">Getting ready…</p>
+      </div>
+      <button class="btn" id="install-btn" type="button" hidden>Install app</button>
+      <button class="btn" id="load-btn" type="button" aria-label="Check for new deals" hidden><span class="wide">Check for new deals</span><span class="narrow" aria-hidden="true">↻</span></button>
+      <input type="file" id="file" accept=".zip,.enc,.gz,.tgz,.csv" hidden>
+    </div>
+    <nav class="tabs" role="tablist" aria-label="Sections">
+      <button class="tab" role="tab" id="tab-deals" aria-selected="true" data-view="deals">Deals</button>
+      <button class="tab" role="tab" id="tab-map" aria-selected="false" data-view="map">Map</button>
+      <button class="tab" role="tab" id="tab-tracked" aria-selected="false" data-view="tracked">Tracked<span class="n" id="tracked-n"></span></button>
+      <button class="tab" role="tab" id="tab-help" aria-selected="false" data-view="help">How it works</button>
+    </nav>
+  </div>
+</div>
+
+<main>
+  <div id="banner-slot"></div>
+  <div id="run-slot"></div>
+  <div class="layout with-panel" id="layout">
+    <div id="views">
+      <section id="view-deals">
+        <div id="deals-empty" hidden></div>
+        <div id="deals-ui" hidden>
+          <div id="weekbar-slot"></div>
+          <div class="filters">
+            <div class="chips" id="play-chips" role="group" aria-label="Kind of deal"></div>
+            <div class="controls">
+              <label class="field search"><span>Search</span><input id="q" type="search" placeholder="Street, owner, parcel or city" autocomplete="off"></label>
+              <label class="field"><span>County</span><select id="county"><option value="">All counties</option></select></label>
+              <label class="field"><span>Sort</span><select id="sort">
+                <option value="score">Best deals first</option>
+                <option value="near">Nearest to my spot</option>
+                <option value="bid">Lowest bid first</option>
+                <option value="discount">Biggest discount</option>
+                <option value="new">Newest first</option>
+              </select></label>
+            </div>
+            <div class="toggles">
+              <label><input type="checkbox" id="hide-pass" checked> Hide deals I passed on</label>
+              <label><input type="checkbox" id="only-new"> Only new this week</label>
+            </div>
+          </div>
+          <p class="count-line" id="count-line"></p>
+          <div class="deals" id="deal-list"></div>
+          <div class="row" style="justify-content:center"><button class="btn more" id="more" type="button" hidden>Show more</button></div>
+        </div>
+      </section>
+
+      <section id="view-map" hidden>
+        <div class="map-wrap">
+          <div class="spot-row">
+            <label class="field"><span>My spot</span><select id="spot-city"><option value="">Tap the map, or pick a town</option></select></label>
+            <button class="btn small" id="spot-mode" type="button" aria-pressed="false">Tap map to set my spot</button>
+            <button class="btn small" id="spot-clear" type="button" hidden>Clear spot</button>
+          </div>
+          <div class="map-box"><canvas id="map" height="420" aria-label="Map of Oklahoma with one dot per deal"></canvas>
+            <div class="map-tools"><button type="button" id="zoom-in" aria-label="Zoom in">+</button><button type="button" id="zoom-out" aria-label="Zoom out">−</button><button type="button" id="zoom-reset" aria-label="Show all of Oklahoma">⤢</button></div>
+          </div>
+          <div class="legend" id="legend"></div>
+          <p class="hint">The map shows the deals that match your filters on the Deals tab. Tap a dot to open it. Drag to move, use + and − to zoom. With a spot set, "Nearest to my spot" sorts by straight-line miles.</p>
+        </div>
+      </section>
+
+      <section id="view-tracked" hidden><div class="pipe" id="pipe"></div></section>
+
+      <section id="view-help" hidden><div class="help" id="help"></div></section>
+    </div>
+
+    <aside class="panel" id="panel" aria-label="Deal details" tabindex="-1"></aside>
+  </div>
+</main>
+
+<div class="modal" id="pw-modal" hidden>
+  <form class="dialog" id="pw-form" autocomplete="off">
+    <h2>Unlock this week's deals</h2>
+    <p>This file is locked with your LEADS_PASSPHRASE. Type it here; it never leaves this page.</p>
+    <input type="password" id="pw" aria-label="Password" placeholder="Your passphrase">
+    <p class="err" id="pw-err"></p>
+    <div class="row"><button class="btn primary" type="submit">Unlock</button><button class="btn" type="button" id="pw-cancel">Cancel</button></div>
+  </form>
+</div>
+<div id="toast" role="status" hidden></div>
+
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
