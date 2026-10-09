@@ -223,10 +223,12 @@ details[open] summary { margin-bottom: 8px; }
 .pick-row small { color: var(--muted); font-variant-numeric: tabular-nums; }
 .more-filters summary { cursor: pointer; color: var(--muted); font-size: 14px; font-weight: 600; }
 .more-filters[open] summary { margin-bottom: 8px; }
-.more-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.more-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 @media (max-width: 640px) { .more-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
 .count-row { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin: 2px 0 10px; }
 .count-row .count-line { margin: 0; flex: 1 1 auto; }
 .export { display: inline-flex; gap: 6px; }
 .pick-row span { font: inherit; letter-spacing: 0; text-transform: none; color: var(--ink); }
 .chip.more-kinds { border-style: dashed; color: var(--accent); }
+.tag.tax { background: var(--amber-soft); color: var(--amber); }
+.tag.tax.deep { background: var(--stamp-soft); color: var(--stamp); }

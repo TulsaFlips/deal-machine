@@ -39,7 +39,7 @@
     latestRun: null, asked: null, failedRun: null, installEvt: null,
     sync: { at: 0, problem: "", pending: false },
   };
-  const FILTER_DEFAULTS = { tags: [], match: "any", counties: [], q: "", sort: "score", hidePass: true, onlyNew: false, kind: "", maxPrice: null, minAcres: null, minScore: null };
+  const FILTER_DEFAULTS = { tags: [], match: "any", counties: [], q: "", sort: "score", hidePass: true, onlyNew: false, kind: "", maxPrice: null, minAcres: null, minScore: null, minTaxYears: null };
   const keyOf = d => d.county + "|" + d.parcel_id;
   const safeUrl = u => /^https:\/\//i.test(String(u || "")) ? String(u) : "";
   const clock = iso => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
@@ -157,7 +157,10 @@
   const metaOf = pack => ({ loadedAt: pack.loadedAt, generatedAt: pack.generatedAt, runDate: pack.runDate, source: pack.source });
 
   function setDeals(deals, meta, sample) {
-    deals.forEach(d => { d.key = keyOf(d); d.p = playOf(d); d.tags = DM.tagsOf(d); d.tagSet = new Set(d.tags); });
+    deals.forEach(d => {
+      d.key = keyOf(d); d.p = playOf(d); d.tags = DM.tagsOf(d); d.tagSet = new Set(d.tags);
+      const t = DM.taxInfo(d); d.taxYears = t.years; d.taxOwed = t.owed;
+    });
     deals.sort((a, b) => (b.score || 0) - (a.score || 0));
     S.deals = deals; S.meta = meta; S.sample = !!sample;
     S.byKey = new Map(deals.map(d => [d.key, d]));
@@ -446,6 +449,7 @@
     if (f.onlyNew && !isNew(d)) return false;
     if (f.kind && d.p.kind !== f.kind) return false;
     if (f.minScore != null && (d.score || 0) < f.minScore) return false;
+    if (f.minTaxYears != null && !(d.taxYears >= f.minTaxYears)) return false;
     if (f.minAcres != null && !(d.acres >= f.minAcres)) return false;
     if (f.maxPrice != null) { const p = priceOf(d); if (p == null || p > f.maxPrice) return false; }
     if (f.q) {
@@ -469,6 +473,8 @@
       out = out.filter(d => d.cost != null && d.total_value).sort((a, b) => a.cost / a.total_value - b.cost / b.total_value);
     } else if (f.sort === "new") {
       out.sort((a, b) => String(b.first_seen || "").localeCompare(String(a.first_seen || "")) || b.score - a.score);
+    } else if (f.sort === "taxes") {
+      out.sort((a, b) => (b.taxYears || 0) - (a.taxYears || 0) || (b.taxOwed || 0) - (a.taxOwed || 0) || b.score - a.score);
     }
     return out;
   }
@@ -508,12 +514,13 @@
 
   function filtersActive() {
     const f = S.filter;
-    return !!(f.tags.length || f.counties.length || f.q || f.onlyNew || f.kind || f.minScore != null || f.minAcres != null || f.maxPrice != null);
+    return !!(f.tags.length || f.counties.length || f.q || f.onlyNew || f.kind || f.minScore != null || f.minAcres != null || f.maxPrice != null || f.minTaxYears != null);
   }
   function syncFilterInputs() {
     const f = S.filter;
     $("sort").value = f.sort; $("hide-pass").checked = f.hidePass; $("only-new").checked = f.onlyNew;
     $("kind").value = f.kind || "";
+    $("tax-years").value = f.minTaxYears ?? "";
     $("max-price").value = f.maxPrice ?? ""; $("min-acres").value = f.minAcres ?? ""; $("min-score").value = f.minScore ?? "";
     syncMoreCount();
   }
@@ -528,7 +535,7 @@
     S.filter.counties = S.filter.counties.filter(c => counties.has(c));
     $("only-new").parentElement.hidden = !S.newCut;
     if (!S.newCut) S.filter.onlyNew = false;
-    syncFilterInputs(); renderChips(); renderCountyPick();
+    renderTaxYears(); syncFilterInputs(); renderChips(); renderCountyPick();
   }
   function buildTowns() {
     $("spot-city").innerHTML = '<option value="">Tap the map, or pick a town</option>'
@@ -560,12 +567,21 @@
   $("hide-pass").addEventListener("change", e => { S.filter.hidePass = e.target.checked; filtersChanged(); });
   $("only-new").addEventListener("change", e => { S.filter.onlyNew = e.target.checked; filtersChanged(); });
   $("kind").addEventListener("change", e => { S.filter.kind = e.target.value; filtersChanged(); });
+  $("tax-years").addEventListener("change", e => { S.filter.minTaxYears = e.target.value ? +e.target.value : null; filtersChanged(); });
   let nTimer;
   [["max-price", "maxPrice"], ["min-acres", "minAcres"], ["min-score", "minScore"]].forEach(([id, key]) => {
     $(id).addEventListener("input", e => { clearTimeout(nTimer); nTimer = setTimeout(() => { S.filter[key] = numOrNull(e.target.value); S.shown = 60; saveFilters(); renderChips(); renderList(); drawMap(); syncMoreCount(); }, 300); });
   });
+  const yearsLabel = y => y >= 3 ? "3+ yrs" : `${y} yr${y > 1 ? "s" : ""}`;
+  function renderTaxYears() {
+    const levels = [...new Set(S.deals.map(d => Math.min(d.taxYears || 0, 3)).filter(Boolean))].sort();
+    const at = y => S.deals.filter(d => d.taxYears >= y).length;
+    if (S.filter.minTaxYears != null && !levels.includes(S.filter.minTaxYears)) levels.push(S.filter.minTaxYears);
+    $("tax-years").innerHTML = '<option value="">Any</option>' + levels.sort().map(y => `<option value="${y}">${y >= 3 ? "3+ years" : y + "+ year" + (y > 1 ? "s" : "")} behind (${at(y).toLocaleString()})</option>`).join("");
+    $("tax-years").value = S.filter.minTaxYears ?? "";
+  }
   function syncMoreCount() {
-    const f = S.filter, extra = [f.kind, f.maxPrice, f.minAcres, f.minScore].filter(v => v != null && v !== "").length;
+    const f = S.filter, extra = [f.kind, f.maxPrice, f.minAcres, f.minScore, f.minTaxYears].filter(v => v != null && v !== "").length;
     $("more-n").textContent = extra ? ` (${extra} on)` : "";
   }
   function clearFilters() {
@@ -583,6 +599,7 @@
     const cols = [
       ["Score", "dec1", 7, d => d.score], ["Kind of deal", "text", 26, d => d.p.label + (d.p.kind ? ` (${d.p.kind})` : "")],
       ["Reasons", "text", 40, d => d.tags.map(x => TAG_LABEL[x]).join(", ")],
+      ["Years behind on taxes (at least)", "num", 12, d => d.taxYears], ["Taxes owed", "money", 11, d => d.taxOwed],
       ["Tracker status", "text", 14, t("status")], ["Tracker notes", "text", 30, t("note")],
       ["County", "text", 12, d => d.county], ["Parcel", "text", 24, d => d.parcel_id],
       ["Property address", "text", 30, d => d.situs_address], ["Property city", "text", 16, d => d.situs_city],
@@ -640,6 +657,7 @@
     const t = S.tracked[d.key];
     const st = t && t.status ? `<span class="tag st${t.status === "Pass" ? " pass" : t.status === "Bought" || t.status === "Under contract" ? " won" : ""}">${esc(t.status)}</span>` : "";
     const dist = S.filter.sort === "near" && S.spot && isFinite(d._mi) ? `<span class="tag">${d._mi < 10 ? d._mi.toFixed(1) : Math.round(d._mi)} mi</span>` : "";
+    const yrs = d.taxYears ? `<span class="tag tax${d.taxYears >= 3 ? " deep" : ""}">${yearsLabel(d.taxYears)} behind on taxes</span>` : "";
     const where = [title(d.situs_city), d.county + " County"].filter(Boolean).join(" · ");
     return `<button class="deal${S.sel === d.key ? " sel" : ""}" type="button" data-key="${esc(d.key)}">
       <span class="score ${scoreClass(d.score)}">${Math.round(d.score || 0)}</span>
@@ -648,7 +666,7 @@
         <span class="addr">${esc(title(d.situs_address) || "Parcel " + d.parcel_id)}</span>
         <span class="where">${esc(where)}</span>
         <span class="why">${esc((d.why || "").split(" · ").slice(0, 2).join(" · "))}</span>
-        ${st || dist || isNew(d) || S.sample ? `<span class="tags">${S.sample ? '<span class="tag sample">Sample</span>' : ""}${isNew(d) ? '<span class="tag new">New this week</span>' : ""}${st}${dist}</span>` : ""}
+        ${st || dist || yrs || isNew(d) || S.sample ? `<span class="tags">${S.sample ? '<span class="tag sample">Sample</span>' : ""}${isNew(d) ? '<span class="tag new">New this week</span>' : ""}${yrs}${st}${dist}</span>` : ""}
       </span>
       <span class="money">${m ? `<b>${m}</b><small>${ml}</small>` : ""}</span>
     </button>`;
@@ -715,6 +733,7 @@
         ${S.sample ? '<div class="banner"><span><b>Sample deal.</b> Invented for the demo. Connect your GitHub project to see real ones.</span></div>' : ""}
         <div class="todo"><b>${esc(p.todo[0])}</b>${esc(p.todo[1])}</div>
         <div class="p-sec"><h3>The numbers</h3><div class="kv">
+          ${kv("Behind on taxes", d.taxYears ? (d.taxYears >= 3 ? "3+ years" : d.taxYears + (d.taxYears > 1 ? " years" : " year")) : null)}${kv("Taxes owed", d.taxOwed != null ? money(d.taxOwed) : null)}
           ${kv("County bid", d.cost != null ? money(d.cost) : null)}${kv("Bid vs value", discount)}
           ${kv("Opening offer", d.offer != null ? money(d.offer) : null)}${kv("After-repair value", d.arv != null ? money(d.arv) : null)}
           ${kv("Repairs (est.)", d.repairs != null ? money(d.repairs) : null)}${kv("Max offer (70% rule)", d.mao != null ? money(d.mao) : null)}
@@ -924,7 +943,7 @@
       <div><h2>Using the deals</h2><ul>
         <li><b>Buy now from the county</b> deals are the best: the county owns them. Call that county's treasurer and ask how to bid.</li>
         <li><b>Behind on taxes, Heirs, Absentee, Neglected, Storm damage</b>: the owner might sell. Mail them a letter (<b>Letters to print</b> on the Deals tab), then track it here.</li>
-        <li><b>Filters:</b> tap as many kinds as you like (say <b>Heirs / estate</b> and <b>Behind on taxes</b>), then choose <b>any of these</b> or <b>all of these</b>. Pick several counties the same way. <b>More filters</b> adds a price limit, acres, score and land or houses.</li>
+        <li><b>Filters:</b> tap as many kinds as you like (say <b>Heirs / estate</b> and <b>Behind on taxes</b>), then choose <b>any of these</b> or <b>all of these</b>. Pick several counties the same way. <b>More filters</b> adds how many years behind on taxes, a price limit, acres, score and land or houses. "3+ years" means the property is on a June tax resale list, which Oklahoma law reserves for about 3 years of unpaid taxes; Oklahoma County's lien-sale notice only shows the latest unpaid year, so those read "1 year".</li>
         <li><b>Export to spreadsheet</b> saves every deal that matches your filters (not just the ones on screen) as an Excel file, with owners, mailing addresses, the numbers and your tracker notes. <b>CSV</b> is the same list for mail-merge tools.</li>
         <li>On the <b>Map</b> tab, set your spot, then "Nearest to my spot" lists what's close while you drive around. <b>Directions</b> opens Google Maps.</li>
         <li>Tap a status on any deal (Mailed, Called, Under contract…). The <b>Tracked</b> tab keeps your follow-ups in one place on all your devices.</li>

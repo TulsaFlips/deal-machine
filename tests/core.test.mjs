@@ -69,3 +69,12 @@ test("spreadsheet: a valid zip with typed cells, and CSV that can't run formulas
   const text = DM.csv(cols, rows);
   assert.ok(text.startsWith("﻿Parcel,Bid,Owner,Map\r\n00123,708,\"'=HYPERLINK(\"\"x\"\") & <b>\""), text.slice(0, 80));
 });
+
+test("years behind on taxes: the robot's number, or read from its sentences", () => {
+  assert.deepEqual(DM.taxInfo({ tax_years: 2, tax_owed: 1940 }), { years: 2, owed: 1940 });
+  assert.deepEqual(DM.taxInfo({ why: "Vacant land · Delinquent property taxes (1 yr, $406 owed)" }), { years: 1, owed: 406 });
+  assert.deepEqual(DM.taxInfo({ why: "Delinquent property taxes (2 yrs, $1,940 owed) · Listed for the June tax resale (min bid $666)" }), { years: 3, owed: 1940 });
+  assert.deepEqual(DM.taxInfo({ why: "Was on the June 2024 tax resale list (3+ years delinquent)" }), { years: 3, owed: null });
+  assert.deepEqual(DM.taxInfo({ why: "Absentee owner" }), { years: null, owed: null });
+  assert.deepEqual(DM.taxInfo({ tax_years: null, tax_owed: null, why: "Delinquent property taxes (1 yr)" }), { years: 1, owed: null });
+});

@@ -71,10 +71,12 @@
                 <option value="bid">Lowest bid first</option>
                 <option value="discount">Biggest discount</option>
                 <option value="new">Newest first</option>
+                <option value="taxes">Most behind on taxes</option>
               </select></label>
             </div>
             <details class="more-filters" id="more-filters"><summary>More filters<span id="more-n"></span></summary>
               <div class="controls more-grid">
+                <label class="field"><span>Behind on taxes</span><select id="tax-years"><option value="">Any</option></select></label>
                 <label class="field"><span>Max bid / offer</span><input id="max-price" type="number" inputmode="numeric" min="0" step="500" placeholder="Any"></label>
                 <label class="field"><span>Min acres</span><input id="min-acres" type="number" inputmode="decimal" min="0" step="0.25" placeholder="Any"></label>
                 <label class="field"><span>Min score</span><input id="min-score" type="number" inputmode="numeric" min="0" max="100" step="5" placeholder="Any"></label>

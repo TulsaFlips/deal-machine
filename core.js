@@ -260,6 +260,19 @@
     }
     return codes;
   }
+  // At least how many years of property tax are unpaid: the robot's tax_years, or read back from its sentences.
+  // A June resale list means 3+ years (68 O.S. § 3125); Oklahoma County's lien-sale notice shows only the latest year.
+  function taxInfo(deal) {
+    const num = v => (v === null || v === undefined || v === "" || !isFinite(+v) ? null : +v);
+    if (deal && (num(deal.tax_years) != null || num(deal.tax_owed) != null)) return { years: num(deal.tax_years), owed: num(deal.tax_owed) };
+    let years = null, owed = null;
+    for (const part of String(deal && deal.why || "").split(" · ")) {
+      const m = part.match(/^Delinquent property taxes \((\d+) yrs?(?:, \$([\d,]+) owed)?\)/);
+      if (m) { years = Math.max(years || 0, +m[1]); if (m[2]) owed = +m[2].replace(/,/g, ""); }
+      else if (/^Listed for the June tax resale|^Was on the .* tax resale list/.test(part.trim())) years = Math.max(years || 0, 3);
+    }
+    return { years, owed };
+  }
   function tagsOf(deal) {
     const codes = signalCodes(deal);
     return TAGS.filter(t => t.codes.some(c => codes.has(c))).map(t => t.id);
@@ -366,5 +379,5 @@
 
   root.DM = { readZip, untar, decryptOpenSSL, parseCSV, leadsFromCSV, unpack, miles, taxCalendar, nthWeekday,
     mergeTracking, pruneTombstones, liveTracking, stable, b64encode, b64decode,
-    TAGS, signalCodes, tagsOf, crc32, zip, xlsx, csv };
+    TAGS, signalCodes, tagsOf, taxInfo, crc32, zip, xlsx, csv };
 })(typeof window !== "undefined" ? window : globalThis);
